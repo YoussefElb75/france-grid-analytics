@@ -1,0 +1,10 @@
+#!/bin/sh
+# Blocks token-like strings and .env files from being committed.
+# Enable once per clone with:  git config core.hooksPath .githooks
+for py in .venv/Scripts/python.exe .venv/bin/python python3 python; do
+  if command -v "$py" >/dev/null 2>&1 || [ -x "$py" ]; then
+    exec "$py" scripts/check_secrets.py --staged
+  fi
+done
+echo "pre-commit: no Python interpreter found; refusing to commit unchecked." >&2
+exit 1

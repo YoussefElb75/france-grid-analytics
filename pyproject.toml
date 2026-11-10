@@ -1,0 +1,70 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "france-grid-analytics"
+version = "0.1.0"
+description = "Analytics on the French power system from ENTSO-E Transparency Platform data: prices, load, generation mix, cross-border flows."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "YoussefElb75" }]
+requires-python = ">=3.12"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "httpx>=0.28",
+    "numpy>=2.2",
+    "pandas>=2.2",
+    "pyarrow>=18",
+    "matplotlib>=3.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff==0.17.3",
+    "mypy>=1.15",
+    "pandas-stubs>=2.2",
+    "pytest>=8.3",
+]
+
+[project.scripts]
+frgrid = "frgrid.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/frgrid"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "N", "PTH", "PL", "S"]
+ignore = ["PLR0913", "PLR2004", "S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PLR2004", "S105", "S106", "S314"]
+# ENTSO-E responses come from one fixed HTTPS host; stdlib ElementTree has no external-entity resolution.
+"src/frgrid/parse.py" = ["S314"]
+"scripts/**" = ["S603", "S607"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+mypy_path = "src"
+files = ["src", "tests", "scripts"]
+
+[[tool.mypy.overrides]]
+module = ["matplotlib.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = ["network: hits the live ENTSO-E API (deselected by default, never in CI)"]
