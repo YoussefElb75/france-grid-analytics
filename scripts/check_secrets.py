@@ -101,7 +101,15 @@ def _paths(paths: Iterable[str]) -> Iterator[tuple[str, bytes]]:
         p = Path(name)
         if p.is_dir():
             for child in sorted(p.rglob("*")):
-                if child.is_file() and ".git" not in child.parts and ".venv" not in child.parts:
+                skip = {
+                    ".git",
+                    ".venv",
+                    "__pycache__",
+                    ".mypy_cache",
+                    ".ruff_cache",
+                    ".pytest_cache",
+                }
+                if child.is_file() and not skip.intersection(child.parts):
                     yield str(child), child.read_bytes()
         elif p.is_file():
             yield name, p.read_bytes()

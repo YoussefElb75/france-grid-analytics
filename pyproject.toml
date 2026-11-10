@@ -51,7 +51,7 @@ ignore = ["PLR0913", "PLR2004", "S101"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["PLR2004", "S105", "S106", "S314"]
 # ENTSO-E responses come from one fixed HTTPS host; stdlib ElementTree has no external-entity resolution.
-"src/frgrid/parse.py" = ["S314"]
+"src/frgrid/{parse,client}.py" = ["S314"]
 "scripts/**" = ["S603", "S607"]
 
 [tool.mypy]
