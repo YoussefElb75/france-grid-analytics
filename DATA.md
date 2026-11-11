@@ -47,12 +47,18 @@ user's responsibility.
 
 * **No raw or processed data files.** Every user downloads the data with their own token into the
   git-ignored `data/` folder (`frgrid fetch`). Nothing under `data/` is ever committed.
-* **Test fixtures**: `tests/fixtures/` holds twelve small excerpts (one or two days each) of real
-  responses, used only to test parsing; identifiers are replaced by placeholders (see
-  `tests/fixtures/README.md`).
-* **Charts** in `docs/img/` show derived, aggregated statistics (monthly means, average daily
-  profiles, error metrics of a forecast backtest), not the underlying time series. Each chart
-  carries the source line "Source: ENTSO-E Transparency Platform; analysis: france-grid-analytics".
+* **Test fixtures**: `tests/fixtures/` holds twelve small response excerpts (one or two days
+  each) used only to test parsing. Their structure is real but **every value is synthetic** and
+  identifiers are placeholders (see `tests/fixtures/README.md`).
+* **Charts and screenshots** in `docs/img/` (README charts, dashboard screenshots and the demo
+  GIF) show derived, aggregated statistics only: monthly means and percentiles, average
+  hour-of-day profiles, binned counts of hours, and error metrics of a forecast backtest. They
+  never show a raw time series. In particular, **day-ahead prices appear only as monthly or
+  average-profile aggregates**, because prices are not on the CC BY 4.0 list.
+* Every chart carries the line "Source: ENTSO-E Transparency Platform; analysis:
+  france-grid-analytics", and the dashboard repeats the source in its header and footer.
+* **The dashboard** reads only the user's own locally downloaded data (fetched with their own
+  token) and, like the images, displays aggregates only.
 
 Attribution for the data shown or derived here: *Source: ENTSO-E Transparency Platform
 (transparency.entsoe.eu). Data processed (aggregated, resampled to hourly averages) by
