@@ -1,4 +1,4 @@
-"""Command line entry point: ``frgrid fetch``.
+"""Command line entry points: ``frgrid fetch`` and ``frgrid report``.
 
 Dates are calendar days in Europe/Paris; ``--end`` is exclusive. Downloads are cached window by
 window, so a run stopped by ``--max-minutes`` resumes where it left off.
@@ -54,6 +54,30 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_report(args: argparse.Namespace) -> int:
+    from pathlib import Path  # noqa: PLC0415
+
+    from frgrid import charts  # noqa: PLC0415 (matplotlib only needed here)
+
+    try:
+        flows = store.load("flows")
+    except FileNotFoundError:
+        flows = None
+    inputs = charts.Inputs(
+        prices=store.load("prices"),
+        load=store.load("load"),
+        generation=store.load("generation"),
+        flows=flows,
+    )
+    paths, results = charts.build(inputs, Path(args.out))
+    for path in paths:
+        print(f"wrote {path}")
+    results_path = Path(args.out).parent / "results.md"
+    results_path.write_text(results + chr(10), encoding="utf-8")
+    print(f"wrote {results_path}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="frgrid", description=__doc__.splitlines()[0])
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -64,6 +88,9 @@ def main(argv: list[str] | None = None) -> int:
     f.add_argument("--datasets", nargs="+", default=["all"], choices=["all", *DATASETS])
     f.add_argument("--max-minutes", type=float, default=9.0, help="stop cleanly after this long")
     f.set_defaults(func=cmd_fetch)
+    r = sub.add_parser("report", help="build README charts and result tables from local data")
+    r.add_argument("--out", default="docs/img", help="folder for the PNG charts")
+    r.set_defaults(func=cmd_report)
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING)
     return int(args.func(args))
