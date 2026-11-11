@@ -24,7 +24,6 @@ import numpy as np
 import pandas as pd
 
 ACK_ROOT = "Acknowledgement_MarketDocument"
-NO_DATA_REASON = "999"
 
 _RES_RE = re.compile(r"^P(?:(?P<days>\d+)D)?(?:T(?:(?P<hours>\d+)H)?(?:(?P<minutes>\d+)M)?)?$")
 
@@ -43,7 +42,9 @@ class AcknowledgementError(ValueError):
 
     @property
     def no_data(self) -> bool:
-        return self.code == NO_DATA_REASON or "no matching data" in self.text.lower()
+        # ENTSO-E uses reason code 999 for "no matching data" *and* for real errors (e.g. an
+        # interval longer than allowed), so the text is what tells them apart.
+        return "no matching data" in self.text.lower()
 
 
 @dataclass(frozen=True)

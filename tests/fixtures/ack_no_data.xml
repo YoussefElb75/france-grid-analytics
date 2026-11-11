@@ -1,0 +1,14 @@
+<?xml version='1.0' encoding='utf-8'?>
+<Acknowledgement_MarketDocument xmlns="urn:iec62325.351:tc57wg16:451-1:acknowledgementdocument:7:0">
+	<mRID>fixture-document</mRID>
+	<createdDateTime>2026-11-10T23:59:43Z</createdDateTime>
+	<sender_MarketParticipant.mRID codingScheme="A01">10X1001A1001A450</sender_MarketParticipant.mRID>
+	<sender_MarketParticipant.marketRole.type>A32</sender_MarketParticipant.marketRole.type>
+	<receiver_MarketParticipant.mRID codingScheme="A01">10X1001A1001A450</receiver_MarketParticipant.mRID>
+	<receiver_MarketParticipant.marketRole.type>A39</receiver_MarketParticipant.marketRole.type>
+	<received_MarketDocument.createdDateTime>2026-11-10T23:59:43Z</received_MarketDocument.createdDateTime>
+	<Reason>
+		<code>999</code>
+		<text>No matching data found for Data item ENERGY_PRICES [12.1.D] (10YFR-RTE------C, 10YFR-RTE------C) and interval 2030-01-01T23:00:00Z/2030-01-02T23:00:00Z.</text>
+	</Reason>
+</Acknowledgement_MarketDocument>
