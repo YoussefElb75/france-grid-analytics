@@ -186,7 +186,7 @@ endorsed by ENTSO-E.
 ## Development
 
 ```bash
-pip install -e ".[dev,app]"
+pip install -e ".[dev,app,screenshots]"   # screenshots: Playwright, needed by mypy
 python scripts/check_secrets.py --all       # and --history for every past commit
 ruff check . && ruff format --check .
 mypy                                        # strict
