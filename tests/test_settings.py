@@ -33,3 +33,16 @@ def test_secret_token_never_renders(token_value: str) -> None:
     assert token_value not in repr(tok)
     assert token_value not in str(tok)
     assert token_value not in f"{tok} {tok!r} {[tok]}"
+
+
+def test_tests_cannot_see_the_real_dotenv() -> None:
+    # conftest points the project root to an empty folder, so the developer's .env is invisible.
+    with pytest.raises(MissingTokenError):
+        load_token()
+
+
+def test_tests_cannot_reach_the_network() -> None:
+    import httpx  # noqa: PLC0415
+
+    with httpx.Client() as client, pytest.raises(RuntimeError, match="network access"):
+        client.get("https://example.invalid/")

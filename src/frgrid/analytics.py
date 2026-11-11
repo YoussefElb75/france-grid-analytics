@@ -209,3 +209,36 @@ def monthly_summary(
     )
     local = frame.tz_convert(LOCAL_TZ)
     return local.resample("MS").mean()
+
+
+GENERATION_GROUPS: dict[str, list[str]] = {
+    "Nuclear": ["Nuclear"],
+    "Hydro": ["Hydro Run-of-river and poundage", "Hydro Water Reservoir"],
+    "Wind": ["Wind Onshore", "Wind Offshore"],
+    "Solar": ["Solar"],
+    "Gas": ["Fossil Gas"],
+    "Other": [
+        "Biomass",
+        "Waste",
+        "Fossil Hard coal",
+        "Fossil Oil",
+        "Fossil Brown coal/Lignite",
+        "Fossil Coal-derived gas",
+        "Geothermal",
+        "Marine",
+        "Other renewable",
+        "Other",
+    ],
+}
+
+
+def grouped_generation(generation: pd.DataFrame) -> pd.DataFrame:
+    """Monthly (Europe/Paris) mean generation in GW per group of :data:`GENERATION_GROUPS`."""
+    hg = hourly(generation)
+    keep = ~core_missing(hg)
+    groups = {
+        name: hg[[c for c in cols if c in hg.columns]].sum(axis=1, min_count=1)
+        for name, cols in GENERATION_GROUPS.items()
+    }
+    frame = pd.DataFrame(groups)[keep].fillna(0.0)
+    return frame.tz_convert(LOCAL_TZ).resample("MS").mean() / 1e3

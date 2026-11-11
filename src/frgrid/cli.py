@@ -1,4 +1,4 @@
-"""Command line entry points: ``frgrid fetch`` and ``frgrid report``.
+"""Command line entry points: ``frgrid fetch``, ``frgrid report`` and ``frgrid dashboard``.
 
 Dates are calendar days in Europe/Paris; ``--end`` is exclusive. Downloads are cached window by
 window, so a run stopped by ``--max-minutes`` resumes where it left off.
@@ -44,7 +44,7 @@ def cmd_fetch(args: argparse.Namespace) -> int:
             except EntsoeError as exc:
                 print(f"{name}: {exc}", file=sys.stderr)
                 return 1
-            path = store.save(name, frame)
+            path = store.save(name, frame, start=start, end=end)
             filled = frame.notna().mean().mean()
             print(
                 f"{name}: {len(frame):,} rows x {frame.shape[1]} cols, {filled:.1%} filled, "
@@ -78,6 +78,22 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_dashboard(args: argparse.Namespace) -> int:
+    import subprocess  # noqa: PLC0415
+
+    from frgrid.settings import project_root  # noqa: PLC0415
+
+    root = project_root()
+    app = root / "app" / "streamlit_app.py"
+    if not app.is_file():
+        print(
+            "app/streamlit_app.py not found; run from a clone of the repository.", file=sys.stderr
+        )
+        return 2
+    cmd = [sys.executable, "-m", "streamlit", "run", str(app), "--server.port", str(args.port)]
+    return subprocess.call(cmd, cwd=root)  # noqa: S603 (fixed argument list, no shell)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="frgrid", description=__doc__.splitlines()[0])
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -91,6 +107,9 @@ def main(argv: list[str] | None = None) -> int:
     r = sub.add_parser("report", help="build README charts and result tables from local data")
     r.add_argument("--out", default="docs/img", help="folder for the PNG charts")
     r.set_defaults(func=cmd_report)
+    d = sub.add_parser("dashboard", help="start the local Streamlit dashboard")
+    d.add_argument("--port", type=int, default=8501)
+    d.set_defaults(func=cmd_dashboard)
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING)
     return int(args.func(args))

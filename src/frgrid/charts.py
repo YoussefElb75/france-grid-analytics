@@ -11,12 +11,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import matplotlib as mpl
 
 mpl.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.colors import LinearSegmentedColormap
@@ -24,56 +22,15 @@ from matplotlib.colors import LinearSegmentedColormap
 from frgrid import analytics as an
 from frgrid.areas import LOCAL_TZ
 from frgrid.forecast import Backtest, backtest
-
-SURFACE = "#fcfcfb"
-TEXT = "#0b0b0b"
-TEXT_2 = "#52514e"
-GRID = "#e4e3df"
-SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300"]
-SEQUENTIAL = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"]
-SOURCE = "Source: ENTSO-E Transparency Platform; analysis: france-grid-analytics"
-
-GENERATION_GROUPS: dict[str, list[str]] = {
-    "Nuclear": ["Nuclear"],
-    "Hydro": ["Hydro Run-of-river and poundage", "Hydro Water Reservoir"],
-    "Wind": ["Wind Onshore", "Wind Offshore"],
-    "Solar": ["Solar"],
-    "Gas": ["Fossil Gas"],
-    "Other": [
-        "Biomass",
-        "Waste",
-        "Fossil Hard coal",
-        "Fossil Oil",
-        "Fossil Brown coal/Lignite",
-        "Fossil Coal-derived gas",
-        "Geothermal",
-        "Marine",
-        "Other renewable",
-        "Other",
-    ],
-}
-
-plt.rcParams.update(
-    {
-        "figure.facecolor": SURFACE,
-        "axes.facecolor": SURFACE,
-        "savefig.facecolor": SURFACE,
-        "font.size": 10,
-        "text.color": TEXT,
-        "axes.labelcolor": TEXT_2,
-        "axes.edgecolor": GRID,
-        "xtick.color": TEXT_2,
-        "ytick.color": TEXT_2,
-        "axes.spines.top": False,
-        "axes.spines.right": False,
-        "axes.spines.left": False,
-        "axes.grid": True,
-        "axes.grid.axis": "y",
-        "grid.color": GRID,
-        "grid.linewidth": 0.8,
-        "legend.frameon": False,
-        "lines.linewidth": 2.0,
-    }
+from frgrid.style import (
+    SEQUENTIAL,
+    SERIES,
+    SURFACE,
+    TEXT_2,
+    label_line_ends,
+    new_figure,
+    period_label,
+    save_figure,
 )
 
 
@@ -85,83 +42,28 @@ class Inputs:
     flows: pd.DataFrame | None
 
 
-def _figure(title: str, subtitle: str, nrows: int = 1, height: float = 4.8) -> tuple[Any, Any]:
-    fig, axes = plt.subplots(nrows, 1, figsize=(9.6, height), sharex=nrows > 1, squeeze=False)
-    fig.suptitle(title, x=0.012, y=0.975, ha="left", fontsize=13, fontweight="bold")
-    fig.text(0.012, 0.975 - 0.33 / height, subtitle, ha="left", color=TEXT_2)
-    fig.text(0.012, 0.012, SOURCE, ha="left", color=TEXT_2, fontsize=8)
-    return fig, axes[:, 0]
-
-
-def _save(fig: Any, path: Path, top: float = 0.82) -> Path:
-    fig.subplots_adjust(left=0.08, right=0.86, top=top, bottom=0.14)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(path, dpi=150, metadata={"Software": None})
-    plt.close(fig)
-    return path
-
-
-def _label_line_ends(ax: Any, frame: pd.DataFrame, fmt: str = "{name}") -> None:
-    """Direct labels at the right end of each line, nudged apart to avoid collisions."""
-    last = frame.ffill().iloc[-1].dropna().sort_values()
-    span = float(np.nanmax(frame.to_numpy()) - np.nanmin(frame.to_numpy())) or 1.0
-    min_gap = 0.06 * span
-    positions: list[float] = []
-    for value in last.to_numpy():
-        y = float(value) if not positions else max(float(value), positions[-1] + min_gap)
-        positions.append(y)
-    x = frame.index[-1]
-    for (name, _), y in zip(last.items(), positions, strict=True):
-        ax.annotate(
-            fmt.format(name=name),
-            xy=(x, y),
-            xytext=(8, 0),
-            textcoords="offset points",
-            va="center",
-            color=TEXT,
-            fontsize=9,
-            annotation_clip=False,
-        )
-
-
-def _period(index: pd.Index[Any]) -> str:
-    idx = pd.DatetimeIndex(index).tz_convert(LOCAL_TZ)
-    return f"{idx.min():%b %Y} - {idx.max():%b %Y}"
-
-
 def price_profile(inp: Inputs, out: Path) -> Path:
     hourly = an.hourly(inp.prices)["price_eur_mwh"]
     prof = an.daily_profile(hourly, by="season")
-    fig, (ax,) = _figure(
+    fig, (ax,) = new_figure(
         "Average day-ahead price by hour of day, France",
-        f"EUR/MWh, mean per local hour and season, {_period(hourly.index)}",
+        f"EUR/MWh, mean per local hour and season, {period_label(hourly.index)}",
     )
     for i, col in enumerate(prof.columns):
         ax.plot(prof.index, prof[col], color=SERIES[i], label=str(col).capitalize())
-    _label_line_ends(ax, prof.rename(columns=lambda c: str(c).capitalize()))
+    label_line_ends(ax, prof.rename(columns=lambda c: str(c).capitalize()))
     ax.set_xticks(range(0, 24, 3), [f"{h:02d}:00" for h in range(0, 24, 3)])
     ax.set_xlim(0, 23)
     ax.set_ylabel("EUR/MWh")
     ax.legend(ncol=4, loc="upper left", bbox_to_anchor=(0, 1.08))
-    return _save(fig, out)
-
-
-def _grouped_generation(generation: pd.DataFrame) -> pd.DataFrame:
-    hourly = an.hourly(generation)
-    keep = ~an.core_missing(hourly)
-    groups = {
-        name: hourly[[c for c in cols if c in hourly.columns]].sum(axis=1, min_count=1)
-        for name, cols in GENERATION_GROUPS.items()
-    }
-    frame = pd.DataFrame(groups)[keep].fillna(0.0)
-    return frame.tz_convert(LOCAL_TZ).resample("MS").mean() / 1e3
+    return save_figure(fig, out)
 
 
 def generation_mix(inp: Inputs, out: Path) -> Path:
-    monthly = _grouped_generation(inp.generation)
-    fig, (ax,) = _figure(
+    monthly = an.grouped_generation(inp.generation)
+    fig, (ax,) = new_figure(
         "Monthly generation mix, France",
-        f"Average generation in GW by production type, {_period(monthly.index)}",
+        f"Average generation in GW by production type, {period_label(monthly.index)}",
     )
     x = pd.DatetimeIndex(monthly.index).tz_localize(None)
     ax.stackplot(
@@ -187,7 +89,7 @@ def generation_mix(inp: Inputs, out: Path) -> Path:
     ax.set_ylabel("GW")
     ax.set_xlim(x[0], x[-1])
     ax.legend(ncol=6, loc="upper left", bbox_to_anchor=(0, 1.1))
-    return _save(fig, out, top=0.8)
+    return save_figure(fig, out, top=0.8)
 
 
 def residual_load_price(inp: Inputs, out: Path) -> Path:
@@ -197,10 +99,10 @@ def residual_load_price(inp: Inputs, out: Path) -> Path:
     clipped = frame[(frame["p"] > -150) & (frame["p"] < 350)]
     share = len(clipped) / len(frame)
     corr = float(frame["rl"].corr(frame["p"]))
-    fig, (ax,) = _figure(
+    fig, (ax,) = new_figure(
         "Price rises with load not covered by wind and solar",
-        f"Hourly day-ahead price vs residual load (load - wind - solar), {_period(frame.index)}; "
-        f"correlation {corr:.2f}, {share:.1%} of hours shown",
+        "Hourly day-ahead price vs residual load (load - wind - solar), "
+        f"{period_label(frame.index)}; correlation {corr:.2f}, {share:.1%} of hours shown",
         height=5.2,
     )
     cmap = LinearSegmentedColormap.from_list("seq", SEQUENTIAL)
@@ -214,7 +116,7 @@ def residual_load_price(inp: Inputs, out: Path) -> Path:
     ax.set_xlabel("Residual load, GW")
     ax.set_ylabel("EUR/MWh")
     fig.subplots_adjust(right=0.98)
-    return _save(fig, out, top=0.84)
+    return save_figure(fig, out, top=0.84)
 
 
 def renewables_and_co2(inp: Inputs, out: Path) -> Path:
@@ -226,9 +128,9 @@ def renewables_and_co2(inp: Inputs, out: Path) -> Path:
         .mean()
     )
     x = pd.DatetimeIndex(monthly.index).tz_localize(None)
-    fig, (ax1, ax2) = _figure(
+    fig, (ax1, ax2) = new_figure(
         "Renewable share and carbon intensity of French generation",
-        f"Monthly means of hourly values, {_period(monthly.index)}",
+        f"Monthly means of hourly values, {period_label(monthly.index)}",
         nrows=2,
         height=5.6,
     )
@@ -239,7 +141,7 @@ def renewables_and_co2(inp: Inputs, out: Path) -> Path:
     for ax in (ax1, ax2):
         ax.set_ylim(bottom=0)
     fig.subplots_adjust(hspace=0.25)
-    return _save(fig, out, top=0.86)
+    return save_figure(fig, out, top=0.86)
 
 
 def net_exports(inp: Inputs, out: Path) -> Path | None:
@@ -249,10 +151,10 @@ def net_exports(inp: Inputs, out: Path) -> Path | None:
     monthly = net.tz_convert(LOCAL_TZ).resample("MS").mean() / 1e3
     order = monthly.mean().sort_values(ascending=False).index
     monthly = monthly[order]
-    fig, (ax,) = _figure(
+    fig, (ax,) = new_figure(
         "France is a net exporter on most borders",
         "Net physical exports by border, monthly mean in GW (negative = net imports), "
-        + _period(monthly.index),
+        + period_label(monthly.index),
     )
     x = np.arange(len(monthly))
     pos = np.zeros(len(monthly))
@@ -277,7 +179,7 @@ def net_exports(inp: Inputs, out: Path) -> Path | None:
     ax.set_xticks(ticks, [f"{monthly.index[i]:%b %Y}" for i in ticks])
     ax.set_ylabel("GW")
     ax.legend(title="border", loc="upper left", bbox_to_anchor=(1.01, 0.9))
-    return _save(fig, out)
+    return save_figure(fig, out)
 
 
 def forecast_errors(bt: Backtest, out: Path) -> Path:
@@ -288,17 +190,17 @@ def forecast_errors(bt: Backtest, out: Path) -> Path:
         "naive_d1": "Naive: same hour D-1",
         "naive_d7": "Naive: same hour D-7",
     }
-    fig, (ax,) = _figure(
+    fig, (ax,) = new_figure(
         "Day-ahead price forecast vs naive baselines (walk-forward)",
         "Mean absolute error per month, EUR/MWh (lower is better)",
     )
     for i, col in enumerate(["model", "naive_d1", "naive_d7"]):
         ax.plot(mae.index, mae[col], color=SERIES[i], marker="o", markersize=4, label=names[col])
-    _label_line_ends(ax, mae.rename(columns=names))
+    label_line_ends(ax, mae.rename(columns=names))
     ax.set_ylim(bottom=0)
     ax.set_ylabel("MAE, EUR/MWh")
     ax.legend(ncol=3, loc="upper left", bbox_to_anchor=(0, 1.08))
-    return _save(fig, out)
+    return save_figure(fig, out)
 
 
 def results_markdown(inp: Inputs, bt: Backtest) -> str:
