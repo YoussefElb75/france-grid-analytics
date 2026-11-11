@@ -27,6 +27,7 @@ dependencies = [
 
 [project.optional-dependencies]
 app = ["streamlit>=1.50"]
+screenshots = ["playwright>=1.50"]
 dev = [
     "ruff==0.17.3",
     "mypy>=1.15",
