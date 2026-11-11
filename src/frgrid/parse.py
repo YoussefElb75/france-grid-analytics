@@ -49,11 +49,17 @@ class AcknowledgementError(ValueError):
 
 @dataclass(frozen=True)
 class TimeSeries:
-    """One ``TimeSeries`` element: its scalar metadata and its values on a regular grid."""
+    """One ``TimeSeries`` element: its scalar metadata and its values on a regular grid.
+
+    A series may contain periods of different resolutions (seen in real load documents around
+    the 15-minute transition). ``values`` is then on the finest of them (coarser periods are
+    repeated, see :func:`expand`) and ``native_minutes`` gives each slot's published resolution.
+    """
 
     meta: dict[str, str]
     values: pd.Series[float]
     resolution: pd.Timedelta
+    native_minutes: pd.Series[float]
 
 
 def _local(tag: str) -> str:
@@ -160,21 +166,23 @@ def parse_document(content: bytes, value_tag: str) -> list[TimeSeries]:
             elif len(child) == 0 and child.text and child.text.strip():
                 meta[name] = child.text.strip()
         curve = meta.get("curveType", "A01")
-        pieces: list[pd.Series[float]] = []
-        resolutions: set[pd.Timedelta] = set()
-        for period in ts:
-            if _local(period.tag) == "Period":
-                values, res = _period(period, value_tag, curve)
-                pieces.append(values)
-                resolutions.add(res)
-        if not pieces:
+        periods = [
+            _period(period, value_tag, curve) for period in ts if _local(period.tag) == "Period"
+        ]
+        if not periods:
             continue
-        if len(resolutions) != 1:
-            msg = "a TimeSeries mixes resolutions; expected one per series"
-            raise ParseError(msg)
-        series = pd.concat(pieces).sort_index()
-        series = series[~series.index.duplicated(keep="first")]
-        out.append(TimeSeries(meta=meta, values=series, resolution=resolutions.pop()))
+        finest = min(res for _, res in periods)
+        values = [expand(v, res, finest) for v, res in periods]
+        native = [
+            pd.Series(res / pd.Timedelta(minutes=1), index=v.index, dtype="float64")
+            for v, (_, res) in zip(values, periods, strict=True)
+        ]
+        series = pd.concat(values).sort_index()
+        keep = ~series.index.duplicated(keep="first")
+        minutes = pd.concat(native).sort_index()[keep]
+        out.append(
+            TimeSeries(meta=meta, values=series[keep], resolution=finest, native_minutes=minutes)
+        )
     return out
 
 

@@ -124,10 +124,7 @@ def day_ahead_prices(
     ]
     price = _combine((_on_grid(s) for s in series), start, end)
     res = _combine(
-        (
-            pd.Series(s.resolution / pd.Timedelta(minutes=1), index=_on_grid(s).index)
-            for s in series
-        ),
+        (expand(s.native_minutes, s.resolution, GRID) for s in series),
         start,
         end,
     )

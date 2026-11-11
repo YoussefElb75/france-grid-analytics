@@ -142,3 +142,18 @@ def test_expand_rejects_non_divisors() -> None:
     idx = pd.date_range("2025-01-01", periods=1, freq="1h", tz="UTC")
     with pytest.raises(ValueError, match="cannot expand"):
         expand(pd.Series([1.0], index=idx), pd.Timedelta(hours=1), pd.Timedelta(minutes=25))
+
+
+def test_mixed_resolution_periods_in_one_series() -> None:
+    content = b"""<?xml version="1.0"?>
+<GL_MarketDocument xmlns="urn:x"><TimeSeries><curveType>A01</curveType>
+  <Period><timeInterval><start>2025-01-01T00:00Z</start><end>2025-01-01T01:00Z</end></timeInterval>
+    <resolution>PT60M</resolution><Point><position>1</position><quantity>5</quantity></Point></Period>
+  <Period><timeInterval><start>2025-01-01T01:00Z</start><end>2025-01-01T01:30Z</end></timeInterval>
+    <resolution>PT15M</resolution><Point><position>1</position><quantity>7</quantity></Point>
+    <Point><position>2</position><quantity>8</quantity></Point></Period>
+</TimeSeries></GL_MarketDocument>"""
+    (ts,) = parse_document(content, "quantity")
+    assert ts.resolution == pd.Timedelta(minutes=15)
+    assert ts.values.tolist() == [5.0, 5.0, 5.0, 5.0, 7.0, 8.0]
+    assert ts.native_minutes.tolist() == [60.0] * 4 + [15.0] * 2
