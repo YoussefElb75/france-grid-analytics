@@ -7,24 +7,50 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   checks:
     runs-on: ubuntu-latest
-    # No secrets are used here: the tests run offline on saved, scrubbed sample responses.
+    timeout-minutes: 20
+    # No secrets are used anywhere in this workflow: every test runs offline on saved, scrubbed
+    # sample responses or synthetic data, and the test suite blocks real network access.
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # full history for the history secret scan
+
       - uses: actions/setup-python@v6
         with:
           python-version: "3.14"
-      - name: Secret scan (token-like strings)
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Workflow uses no secrets
+        run: |
+          if grep -nE '\$\{\{ *secrets\.' .github/workflows/*.yml; then
+            echo "workflows must not use secrets" >&2
+            exit 1
+          fi
+
+      - name: Secret scan (tracked files)
         run: python scripts/check_secrets.py --all
+
+      - name: Secret scan (full history)
+        run: python scripts/check_secrets.py --history
+
       - name: Install
-        run: python -m pip install -e ".[dev]"
+        run: python -m pip install -e ".[dev,app]"
+
       - name: Ruff
         run: |
           ruff check .
           ruff format --check .
+
       - name: Mypy (strict)
         run: mypy
+
       - name: Pytest (offline)
         run: pytest -m "not network"

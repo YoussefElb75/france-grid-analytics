@@ -67,3 +67,28 @@ def test_dotenv_files(name: str, blocked: bool) -> None:
 
 def test_clean_text_passes() -> None:
     assert rules(b"documentType=A44&in_Domain=10YFR-RTE------C") == []
+
+
+def test_history_entries_keep_the_dotenv_rule() -> None:
+    assert cs.run([(".env.example @1234abcd", b"")], []) == []
+    assert [f.rule for f in cs.run([("x/.env @1234abcd", b"")], [])] == ["dotenv-file"]
+
+
+def test_history_mode_scans_old_versions_and_messages(tmp_path: Path, token_value: str) -> None:
+    import subprocess  # noqa: PLC0415
+
+    def git(*args: str) -> None:
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+
+    git("init", "-q")
+    git("config", "user.email", "test@example.invalid")
+    git("config", "user.name", "test")
+    (tmp_path / "a.txt").write_text(f"key={token_value}\n", encoding="utf-8")
+    git("add", "a.txt")
+    git("commit", "-q", "--no-verify", "-m", "add")
+    (tmp_path / "a.txt").write_text("clean\n", encoding="utf-8")
+    git("commit", "-q", "--no-verify", "-am", f"remove {token_value}")
+    found = cs.run(cs._history(tmp_path), [])
+    rules_found = sorted(f.rule for f in found)
+    assert rules_found == ["uuid", "uuid"]  # the old blob and the commit message
+    assert all(token_value not in str(f) for f in found)

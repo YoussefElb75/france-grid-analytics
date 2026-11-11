@@ -74,7 +74,7 @@ def scan_bytes(path: str, data: bytes, local_tokens: Iterable[bytes] = ()) -> li
 
 
 def _is_dotenv(path: str) -> bool:
-    name = Path(path).name
+    name = Path(path.split(" @", 1)[0]).name  # history entries look like "path @sha"
     return (name == ".env" or name.startswith(".env.")) and name != ".env.example"
 
 
@@ -86,6 +86,22 @@ def _staged(root: Path) -> Iterator[tuple[str, bytes]]:
     names = _git(root, "diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z")
     for name in filter(None, names.decode().split("\0")):
         yield name, _git(root, "show", f":{name}")
+
+
+def _history(root: Path) -> Iterator[tuple[str, bytes]]:
+    """Every blob reachable from any ref (all versions of all files) and every commit message."""
+    listing = _git(root, "rev-list", "--objects", "--all").decode().splitlines()
+    seen: set[str] = set()
+    for line in listing:
+        sha, _, path = line.partition(" ")
+        if sha in seen:
+            continue
+        seen.add(sha)
+        kind = _git(root, "cat-file", "-t", sha).decode().strip()
+        if kind == "blob":
+            yield f"{path or sha} @{sha[:8]}", _git(root, "cat-file", "blob", sha)
+        elif kind == "commit":
+            yield f"commit message @{sha[:8]}", _git(root, "log", "-1", "--format=%B", sha)
 
 
 def _tracked(root: Path) -> Iterator[tuple[str, bytes]]:
@@ -132,6 +148,9 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--staged", action="store_true", help="scan files staged for commit")
     mode.add_argument("--all", action="store_true", help="scan all tracked files")
     mode.add_argument("--paths", nargs="+", help="scan these files or folders")
+    mode.add_argument(
+        "--history", action="store_true", help="scan every blob and message in history"
+    )
     args = parser.parse_args(argv)
 
     root = Path(_git(Path.cwd(), "rev-parse", "--show-toplevel").decode().strip())
@@ -139,6 +158,8 @@ def main(argv: list[str] | None = None) -> int:
         files = _staged(root)
     elif args.all:
         files = _tracked(root)
+    elif args.history:
+        files = _history(root)
     else:
         files = _paths(args.paths)
     findings = run(files, _local_token_variants(root))
