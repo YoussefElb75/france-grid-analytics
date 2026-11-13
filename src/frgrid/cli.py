@@ -57,7 +57,27 @@ def cmd_fetch(args: argparse.Namespace) -> int:
 def cmd_report(args: argparse.Namespace) -> int:
     from pathlib import Path  # noqa: PLC0415
 
-    from frgrid import charts  # noqa: PLC0415 (matplotlib only needed here)
+    from frgrid import charts, europe_report  # noqa: PLC0415 (matplotlib only needed here)
+
+    out = Path(args.out)
+    if all(store.exists(n) for n in ("eu_prices", "flows", "eu_solar")):
+        eu_inputs = europe_report.EuropeInputs(
+            prices=store.load("eu_prices"),
+            flows=store.load("flows"),
+            solar=store.load("eu_solar"),
+            capacity=store.load("eu_capacity") if store.exists("eu_capacity") else None,
+        )
+        eu_paths, eu_results = europe_report.build(eu_inputs, out)
+        for path in eu_paths:
+            print(f"wrote {path}")
+        eu_results_path = out.parent / "europe_results.md"
+        eu_results_path.write_text(eu_results + chr(10), encoding="utf-8")
+        print(f"wrote {eu_results_path}")
+    elif args.europe_only:
+        print("European datasets missing: run `frgrid fetch` first.", file=sys.stderr)
+        return 2
+    if args.europe_only:
+        return 0
 
     try:
         flows = store.load("flows")
@@ -106,6 +126,9 @@ def main(argv: list[str] | None = None) -> int:
     f.set_defaults(func=cmd_fetch)
     r = sub.add_parser("report", help="build README charts and result tables from local data")
     r.add_argument("--out", default="docs/img", help="folder for the PNG charts")
+    r.add_argument(
+        "--europe-only", action="store_true", help="only the European charts (skips the backtest)"
+    )
     r.set_defaults(func=cmd_report)
     d = sub.add_parser("dashboard", help="start the local Streamlit dashboard")
     d.add_argument("--port", type=int, default=8501)

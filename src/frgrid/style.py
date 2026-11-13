@@ -59,8 +59,10 @@ def new_figure(title: str, subtitle: str, nrows: int = 1, height: float = 4.8) -
     return fig, axes[:, 0]
 
 
-def save_figure(fig: Any, path: Path, top: float = 0.82) -> Path:
-    fig.subplots_adjust(left=0.08, right=0.86, top=top, bottom=0.14)
+def save_figure(fig: Any, path: Path, top: float = 0.82, *, adjust: bool = True) -> Path:
+    """Save as PNG; ``adjust=False`` keeps margins the builder already set."""
+    if adjust:
+        fig.subplots_adjust(left=0.08, right=0.86, top=top, bottom=0.14)
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=150, metadata={"Software": None})
     plt.close(fig)
