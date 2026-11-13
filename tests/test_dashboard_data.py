@@ -12,7 +12,7 @@ import pytest
 from frgrid import store
 from frgrid.client import EntsoeClient, EntsoeError
 from frgrid.dashboard import data as dd
-from synthetic import synthetic_inputs
+from synthetic import synthetic_europe, synthetic_inputs
 
 FIX = Path(__file__).parent / "fixtures"
 
@@ -73,6 +73,7 @@ def test_empty_store_gives_an_empty_bundle() -> None:
 
 def test_bundle_reports_oldest_fetch_time_and_is_never_live_from_disk() -> None:
     save_all(fetched_at=pd.Timestamp("2026-11-01T10:00Z"))
+    save_europe()
     store.save(
         "prices", synthetic_inputs(days=200).prices, fetched_at=pd.Timestamp("2026-11-05T10:00Z")
     )
@@ -87,7 +88,7 @@ def test_partial_store_lists_missing_datasets() -> None:
     store.save("prices", synthetic_inputs(days=200).prices)
     bundle = dd.load_bundle()
     assert bundle.available == ["prices"]
-    assert bundle.missing == ["load", "generation", "flows"]
+    assert bundle.missing == ["load", "generation", "flows", "eu_prices", "eu_solar", "eu_capacity"]
 
 
 def test_meta_falls_back_to_file_time() -> None:
@@ -247,3 +248,48 @@ def test_refresh_uses_real_time_budget_clock() -> None:
     t0 = time.monotonic()
     dd.refresh(date(2026, 11, 1), date(2026, 11, 2), client_factory=lambda: factory(FakeClient()))
     assert time.monotonic() - t0 < 60
+
+
+def save_europe() -> None:
+    for name, frame in synthetic_europe(days=200).items():
+        store.save(name, frame, fetched_at=pd.Timestamp("2026-11-01T10:00Z"))
+
+
+def test_europe_view_needs_european_prices() -> None:
+    save_all()
+    bundle = dd.load_bundle()
+    assert "eu_prices" in bundle.missing
+    assert dd.europe_view(bundle, pd.Timestamp("2025-01-01"), pd.Timestamp("2025-06-01")) is None
+
+
+def test_europe_view_tables_follow_the_selected_months() -> None:
+    save_all()
+    save_europe()
+    bundle = dd.load_bundle()
+    assert bundle.missing == []
+    view = dd.europe_view(bundle, pd.Timestamp("2025-02-01"), pd.Timestamp("2025-03-01"))
+    assert view is not None
+    assert list(view.monthly_prices.index) == [
+        pd.Timestamp("2025-02-01"),
+        pd.Timestamp("2025-03-01"),
+    ]
+    assert list(view.spread_by_hour.index) == list(range(24))
+    assert view.flow_vs_spread is not None
+    assert view.congestion_check is not None
+    assert view.negative_summary is not None
+    assert "NL" not in (view.solar_profile if view.solar_profile is not None else pd.DataFrame())
+
+
+def test_europe_view_without_optional_datasets() -> None:
+    store.save("eu_prices", synthetic_europe(days=60)["eu_prices"])
+    view = dd.europe_view(dd.load_bundle(), pd.Timestamp("2025-01-01"), pd.Timestamp("2025-02-01"))
+    assert view is not None
+    assert view.flow_vs_spread is None
+    assert view.solar_profile is None
+    assert view.congestion_by_month is None
+
+
+def test_europe_view_outside_the_data_is_none() -> None:
+    store.save("eu_prices", synthetic_europe(days=60)["eu_prices"])
+    bundle = dd.load_bundle()
+    assert dd.europe_view(bundle, pd.Timestamp("2024-01-01"), pd.Timestamp("2024-03-01")) is None

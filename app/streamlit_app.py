@@ -14,7 +14,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
 
-from frgrid.areas import LOCAL_TZ
+from frgrid import europe_figures as ef
+from frgrid.areas import LOCAL_TZ, ZONE_LABELS
 from frgrid.dashboard import data as dd
 from frgrid.dashboard import figures as ff
 from frgrid.forecast import Backtest
@@ -176,6 +177,75 @@ def flows_tab(bundle: dd.Bundle, first: pd.Timestamp, last: pd.Timestamp) -> Non
     )
 
 
+def europe_tab(bundle: dd.Bundle, first: pd.Timestamp, last: pd.Timestamp) -> None:
+    view = dd.europe_view(bundle, first, last)
+    if view is None:
+        missing("European price")
+        return
+    label = f"{first:%b %Y} - {last:%b %Y}"
+    mean = view.monthly_prices.mean()
+    conv = view.convergence_summary
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Mean French day-ahead price", f"{mean['FR']:.1f} EUR/MWh")
+    cheapest = str(mean.idxmin())
+    c2.metric("Cheapest zone on average", ZONE_LABELS.get(cheapest, cheapest))
+    shares = conv["converged"].astype(float).to_dict()
+    if "DE_LU" in shares:
+        c3.metric("Time with France = Germany-Lux. price", f"{shares['DE_LU']:.1%}")
+
+    st.subheader("Prices by zone")
+    show(ef.price_heatmap(view.monthly_prices), view.monthly_prices)
+
+    st.subheader("Spreads to France")
+    show(ef.spread_distribution(view.spread_distribution, label), view.spread_distribution)
+    show(ef.spread_by_hour(view.spread_by_hour, label), view.spread_by_hour)
+    show(ef.spread_by_month(view.spread_by_month), view.spread_by_month)
+
+    st.subheader("Convergence and congestion")
+    show(ef.convergence_by_month(view.convergence_by_month), view.convergence_by_month)
+    with st.expander("Convergence summary"):
+        st.dataframe(conv.round(3), width="stretch")
+    if view.flow_vs_spread is None or view.against_by_spread_size is None:
+        missing("cross-border flow")
+    else:
+        show(ef.flow_vs_spread(view.flow_vs_spread, label), view.flow_vs_spread)
+        show(
+            ef.against_by_spread_size(view.against_by_spread_size, label),
+            view.against_by_spread_size,
+        )
+        st.caption(
+            "Physical flows include loop and transit flows; in the flow-based Core region (FR, BE, "
+            "NL, DE-LU) the market can also schedule exchanges against a price difference."
+        )
+    if view.congestion_by_month is None or view.congestion_check is None:
+        missing("cross-border capacity")
+    else:
+        show(ef.congestion_by_month(view.congestion_by_month), view.congestion_by_month)
+        with st.expander("Check: is the border full when prices differ?"):
+            st.dataframe(view.congestion_check.round(3), width="stretch")
+        st.caption(
+            "Day-ahead NTC and day-ahead commercial schedules exist only on the FR-ES and FR-IT "
+            "North borders; BE and DE-LU are flow-based and have no bilateral capacity."
+        )
+
+    st.subheader("Negative prices")
+    show(ef.negative_heatmap(view.negative_by_month), view.negative_by_month)
+    if view.solar_profile is None or view.negative_summary is None:
+        missing("solar generation")
+    else:
+        show(
+            ef.negative_vs_solar(view.negative_by_hour, view.solar_profile, label),
+            view.negative_by_hour,
+        )
+        with st.expander("When negative prices happen"):
+            st.dataframe(view.negative_summary.round(3), width="stretch")
+    st.caption(
+        "Spread = neighbour price - French price. Convergence = equal prices to the cent. "
+        "All shares are per quarter-hour (hourly prices before October 2025 count four times). "
+        "Monthly and hour-of-day aggregates only."
+    )
+
+
 def main() -> None:
     sig = dd.store_signature()
     bundle = cached_bundle(sig)
@@ -199,13 +269,15 @@ def main() -> None:
     with st.sidebar:
         first, last = period_selector(bundle)
 
-    prices, system, flows = st.tabs(["Prices", "System", "Cross-border flows"])
+    prices, system, flows, europe = st.tabs(["Prices", "System", "Cross-border flows", "Europe"])
     with prices:
         prices_tab(bundle, sig, first, last)
     with system:
         system_tab(bundle, first, last)
     with flows:
         flows_tab(bundle, first, last)
+    with europe:
+        europe_tab(bundle, first, last)
     st.caption(f"{SOURCE}. Not affiliated with or endorsed by ENTSO-E.")
 
 

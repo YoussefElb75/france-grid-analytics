@@ -188,7 +188,8 @@ def convergence_summary(prices: pd.DataFrame) -> pd.DataFrame:
 def net_exports(flows: pd.DataFrame) -> pd.DataFrame:
     """Net physical flow out of France per price zone with a border, MW (export - import)."""
     cols = {}
-    for zone, border in FLOW_BORDER.items():
+    for zone in (z for z in PRICE_ZONES if z in FLOW_BORDER):
+        border = FLOW_BORDER[zone]
         if f"export_{border}" in flows and f"import_{border}" in flows:
             cols[zone] = flows[f"export_{border}"] - flows[f"import_{border}"]
     return pd.DataFrame(cols, index=flows.index)

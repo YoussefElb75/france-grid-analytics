@@ -41,3 +41,32 @@ def synthetic_inputs(days: int = 160, seed: int = 1) -> charts.Inputs:
         generation=gen,
         flows=flows,
     )
+
+
+def synthetic_europe(days: int = 160, seed: int = 2) -> dict[str, pd.DataFrame]:
+    """Synthetic eu_prices, eu_solar and eu_capacity frames on the same grid as the inputs."""
+    idx = pd.date_range("2025-01-01", periods=days * 96, freq="15min", tz="UTC", name="time_utc")
+    rng = np.random.default_rng(seed)
+    n = len(idx)
+    hour = idx.tz_convert("Europe/Paris").hour.to_numpy()
+    bell = np.clip(np.sin(np.pi * (hour - 6) / 12), 0, None)
+    base = 60 + 20 * np.sin(2 * np.pi * hour / 24) - 70 * bell + rng.normal(0, 10, n)
+    prices: dict[str, np.ndarray] = {"FR": base}
+    for i, zone in enumerate(("DE_LU", "BE", "NL", "ES", "IT_NORTH")):
+        coupled = rng.random(n) < 0.3
+        prices[zone] = np.where(coupled, base, base + rng.normal(5 * i, 10, n))
+    eu_prices = pd.DataFrame(prices, index=idx)
+    for zone in prices:
+        eu_prices[f"res_{zone}"] = 15.0
+    solar = pd.DataFrame({z: 1_000 * (i + 1) * bell for i, z in enumerate(prices)}, index=idx)
+    cap: dict[str, np.ndarray] = {}
+    for zone in ("ES", "IT_NORTH"):
+        cap[f"ntc_FR_to_{zone}"] = np.full(n, 3_000.0)
+        cap[f"da_FR_to_{zone}"] = rng.choice([1_000.0, 3_000.0], n)
+        cap[f"ntc_{zone}_to_FR"] = np.full(n, 2_000.0)
+        cap[f"da_{zone}_to_FR"] = np.zeros(n)
+    return {
+        "eu_prices": eu_prices,
+        "eu_solar": solar,
+        "eu_capacity": pd.DataFrame(cap, index=idx),
+    }

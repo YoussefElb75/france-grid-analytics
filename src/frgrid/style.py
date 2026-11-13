@@ -99,3 +99,14 @@ def label_line_ends(ax: Any, frame: pd.DataFrame, fmt: str = "{name}") -> None:
 def period_label(index: pd.Index[Any]) -> str:
     idx = pd.DatetimeIndex(index).tz_convert(LOCAL_TZ)
     return f"{idx.min():%b %Y} - {idx.max():%b %Y}"
+
+
+# Fixed colour per bidding zone, so a zone keeps its colour in every European chart.
+ZONE_COLORS = {
+    "DE_LU": SERIES[0],
+    "BE": SERIES[1],
+    "NL": SERIES[2],
+    "ES": SERIES[3],
+    "IT_NORTH": SERIES[4],
+    "FR": SERIES[5],
+}

@@ -8,7 +8,7 @@ import pandas as pd
 from streamlit.testing.v1 import AppTest
 
 from frgrid import store
-from synthetic import synthetic_inputs
+from synthetic import synthetic_europe, synthetic_inputs
 
 APP = str(Path(__file__).resolve().parents[1] / "app" / "streamlit_app.py")
 
@@ -30,6 +30,8 @@ def save_all() -> None:
         ("flows", inp.flows),
     ):
         store.save(name, frame, fetched_at=pd.Timestamp("2026-11-01T10:00Z"))
+    for name, frame in synthetic_europe(days=200).items():
+        store.save(name, frame, fetched_at=pd.Timestamp("2026-11-01T10:00Z"))
 
 
 def test_empty_state() -> None:
@@ -50,7 +52,9 @@ def test_cached_data_is_never_labelled_live() -> None:
     assert "LIVE" not in text
     assert "Cached data" in text
     assert "Data as of 2026-11-01 11:00 (Europe/Paris)" in text
-    assert [t.label for t in at.tabs] == ["Prices", "System", "Cross-border flows"]
+    assert [t.label for t in at.tabs] == ["Prices", "System", "Cross-border flows", "Europe"]
+    assert "Cheapest zone on average" in [m.label for m in at.metric]
+    assert "Missing datasets" not in text
     assert len(at.get("imgs")) or True  # charts are rendered as images by st.pyplot
 
 
@@ -71,6 +75,20 @@ def test_partial_data_shows_clean_warnings() -> None:
     warnings = " ".join(str(w.value) for w in at.warning)
     assert "No load data" in warnings
     assert "No cross-border flow data" in warnings
+    assert "No European price data" in warnings
+
+
+def test_europe_tab_without_solar_or_capacity_warns_cleanly() -> None:
+    inp = synthetic_inputs(days=200)
+    store.save("prices", inp.prices)
+    store.save("eu_prices", synthetic_europe(days=200)["eu_prices"])
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    assert not at.exception
+    assert not at.error
+    warnings = " ".join(str(w.value) for w in at.warning)
+    assert "No solar generation data" in warnings
+    assert "No cross-border capacity data" in warnings
+    assert "Time with France = Germany-Lux. price" in [m.label for m in at.metric]
 
 
 def test_no_local_paths_or_user_names_in_the_page() -> None:

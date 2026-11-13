@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 
 from frgrid import analytics as an
+from frgrid import europe as eu
 from frgrid import store
 from frgrid.areas import LOCAL_TZ, NEIGHBOURS
 from frgrid.client import EntsoeClient, EntsoeError
@@ -28,7 +29,7 @@ from frgrid.datasets import DATASETS, Budget, BudgetExceededError
 from frgrid.forecast import Backtest, backtest
 from frgrid.settings import MissingTokenError, load_token
 
-NAMES = ("prices", "load", "generation", "flows")
+NAMES = ("prices", "load", "generation", "flows", "eu_prices", "eu_solar", "eu_capacity")
 
 
 class DataError(RuntimeError):
@@ -286,6 +287,65 @@ def border_flows(flows: pd.DataFrame) -> pd.DataFrame:
     out["net_export_gw"] = out["export_gw"] - out["import_gw"]
     out.index.name = "border"
     return out.sort_values("net_export_gw", ascending=False)
+
+
+# ---- European markets (aggregates only) ------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class EuropeView:
+    """Every aggregated table of the Europe tab for one period (``None`` = dataset missing)."""
+
+    monthly_prices: pd.DataFrame
+    spread_distribution: pd.DataFrame
+    spread_by_hour: pd.DataFrame
+    spread_by_month: pd.DataFrame
+    convergence_by_month: pd.DataFrame
+    convergence_summary: pd.DataFrame
+    negative_by_month: pd.DataFrame
+    negative_by_hour: pd.DataFrame
+    flow_vs_spread: pd.DataFrame | None
+    against_by_spread_size: pd.DataFrame | None
+    solar_profile: pd.DataFrame | None
+    negative_summary: pd.DataFrame | None
+    congestion_by_month: pd.DataFrame | None
+    congestion_check: pd.DataFrame | None
+
+
+def europe_view(bundle: Bundle, first: pd.Timestamp, last: pd.Timestamp) -> EuropeView | None:
+    """Tables for the months ``first``..``last``; ``None`` without European prices."""
+    raw = bundle.get("eu_prices")
+    if raw is None:
+        return None
+    prices = clip_period(raw, first, last)
+    if prices[eu.zones(prices)].dropna(how="all").empty:
+        return None
+    spr = eu.spreads(prices)
+    flows, solar, cap = (bundle.get(n) for n in ("flows", "eu_solar", "eu_capacity"))
+    flows = None if flows is None else clip_period(flows, first, last)
+    solar = None if solar is None else clip_period(solar, first, last)
+    cap = None if cap is None else clip_period(cap, first, last)
+    has_flows = flows is not None and not flows.dropna(how="all").empty
+    return EuropeView(
+        monthly_prices=eu.monthly_mean_prices(prices),
+        spread_distribution=eu.spread_distribution(spr),
+        spread_by_hour=eu.spread_by_hour(spr),
+        spread_by_month=eu.spread_by_month(spr),
+        convergence_by_month=eu.convergence_by_month(prices),
+        convergence_summary=eu.convergence_summary(prices),
+        negative_by_month=eu.negative_by_month(prices),
+        negative_by_hour=eu.negative_by_hour(prices),
+        flow_vs_spread=eu.flow_vs_spread(prices, flows)
+        if has_flows and flows is not None
+        else None,
+        against_by_spread_size=eu.against_by_spread_size(prices, flows)
+        if has_flows and flows is not None
+        else None,
+        solar_profile=None if solar is None else eu.solar_profile(solar),
+        negative_summary=None if solar is None else eu.negative_solar_summary(prices, solar),
+        congestion_by_month=None if cap is None else eu.congestion_by_month(cap),
+        congestion_check=None if cap is None else eu.congestion_check(prices, cap),
+    )
 
 
 def month_options(bundle: Bundle) -> list[pd.Timestamp]:
