@@ -22,6 +22,7 @@ ENTSO-E response: the token travels in a request header only.
 | `prices_es_with_intraday.xml` | ES prices, 1 Nov 2026: one day-ahead series (contract A01) and three intraday auction series (A07) |
 | `prices_nl_transition.xml` | NL day-ahead prices, 30 Sep (PT60M) - 1 Oct 2025 (PT15M) |
 | `load_actual.xml`, `load_forecast.xml` | FR total load, realised (A16) and day-ahead forecast (A01), 1 Nov 2026 |
+| `solar_nl_with_consumption.xml` | NL solar (A75, B16), 15 Jun 2025: a consumption series (outBiddingZone) and the generation series (inBiddingZone) |
 | `generation.xml` | FR generation per type, 1 Nov 2026, six PSR types incl. pumped-storage pumping |
 | `flows_*.xml` | FR physical flows with BE (both directions), CH import (single point), GB export (PT60M) |
 | `ack_no_data.xml` | acknowledgement "No matching data found" (reason 999) |

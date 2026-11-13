@@ -125,6 +125,61 @@ def test_net_exports_map_price_zones_to_v1_border_columns() -> None:
     assert "NL" not in net
 
 
+def test_negative_prices_by_year_count_equivalent_hours() -> None:
+    p = prices_frame({"FR": [-1.0] * 4 + [0.0] * 4, "ES": [-5.0] * 8})
+    years = eu.negative_by_year(p)
+    assert years.loc[2025, "FR"] == 1.0  # four negative quarter-hours = one hour
+    assert years.loc[2025, "ES"] == 2.0
+    assert eu.negative(p)["FR"].iloc[4] == 0.0  # zero is not negative
+
+
+def solar_day() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """One local day: solar bell from 06:00 to 18:00, prices negative 11:00-15:00 in ES only."""
+    idx = grid(96)
+    hour = pd.DatetimeIndex(idx).tz_convert("Europe/Paris").hour.to_numpy()
+    bell = np.clip(np.sin(np.pi * (hour - 6) / 12), 0, None)
+    solar = pd.DataFrame({"FR": 10_000 * bell, "ES": 20_000 * bell}, index=idx)
+    es = np.where((hour >= 11) & (hour < 15), -2.0, 40.0)
+    return prices_frame({"FR": [30.0] * 96, "ES": list(es)}), solar
+
+
+def test_relative_solar_is_scaled_to_the_yearly_peak() -> None:
+    _, solar = solar_day()
+    rel = eu.relative_solar(solar)
+    assert rel.max().max() <= 1.0
+    assert rel["FR"].max() == pytest.approx(1.0)
+    pd.testing.assert_series_equal(rel["FR"], rel["ES"], check_names=False)
+    prof = eu.solar_profile(solar)
+    assert prof.loc[0, "ES"] == 0.0
+    assert prof.loc[12, "ES"] == pytest.approx(1.0)
+
+
+def test_negative_prices_line_up_with_solar() -> None:
+    prices, solar = solar_day()
+    s = eu.negative_solar_summary(prices, solar)
+    assert s.loc["ES", "negative_share"] == pytest.approx(16 / 96)
+    assert s.loc["ES", "hours_per_year"] == pytest.approx(4 * 365.25)
+    assert s.loc["ES", "in_daylight"] == 1.0
+    assert s.loc["ES", "solar_above_half"] == 1.0
+    assert s.loc["ES", "on_weekends"] == 0.0  # 2 June 2025 is a Monday
+    assert s.loc["ES", "in_spring"] == 0.0
+    assert (s["corr_solar"].loc[["ES"]] < -0.5).all()
+    assert s["in_daylight"].isna().tolist() == [True, False]
+    by_hour = eu.negative_by_hour(prices)
+    assert by_hour.loc[12, "ES"] == 1.0
+    assert by_hour.loc[20, "ES"] == 0.0
+
+
+def test_incomplete_solar_zones_are_left_out() -> None:
+    prices, solar = solar_day()
+    solar["NL"] = solar["FR"] / 50
+    prices["NL"] = prices["FR"]
+    assert "NL" not in eu.relative_solar(solar)
+    assert "NL" not in eu.solar_profile(solar)
+    s = eu.negative_solar_summary(prices, solar)
+    assert s["corr_solar"].isna().loc[["NL"]].all()
+
+
 def test_resolution_periods_detect_hourly_values_on_a_15min_grid() -> None:
     # Day 1 hourly (60), day 2 on the 15-min grid with hourly-constant values, day 3 real 15-min.
     idx = grid(96 * 3, start="2025-09-28T22:00Z")

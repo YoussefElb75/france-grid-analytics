@@ -178,3 +178,21 @@ def test_france_prices_reuse_the_v1_query() -> None:
     datasets.european_prices(as_client(fake), *DAY)
     v1_query = {"documentType": "A44", "in_Domain": FRANCE, "out_Domain": FRANCE}
     assert fake.calls[0] == fake.calls[1] == v1_query
+
+
+def test_solar_per_zone_drops_the_consumption_series() -> None:
+    # Fixture: series 1 is reported against outBiddingZone (consumption, base 1000), series 2
+    # against inBiddingZone (generation, base 1100); values are base + 10 * position.
+    day = (pd.Timestamp("2025-06-14T22:00Z"), pd.Timestamp("2025-06-15T22:00Z"))
+    fake = FakeClient(
+        {(("documentType", "A75"), ("psrType", "B16")): "solar_nl_with_consumption.xml"}
+    )
+    frame = datasets.european_solar(as_client(fake), *day)
+    assert list(frame.columns) == list(PRICE_ZONES)
+    assert all(c["psrType"] == "B16" and c["processType"] == "A16" for c in fake.calls)
+    assert [c["in_Domain"] for c in fake.calls] == list(PRICE_ZONES.values())
+    parsed = parse_document((FIX / "solar_nl_with_consumption.xml").read_bytes(), "quantity")
+    generation = next(s for s in parsed if "inBiddingZone_Domain.mRID" in s.meta)
+    expected = generation.values.reindex(frame.index)
+    pd.testing.assert_series_equal(frame["NL"], expected, check_names=False, check_freq=False)
+    assert frame["NL"].min() >= 1100

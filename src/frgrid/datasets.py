@@ -182,6 +182,11 @@ def load(
     return _frame(cols, start, end)
 
 
+def is_consumption(ts: TimeSeries) -> bool:
+    """A75 series reported only against ``outBiddingZone_Domain`` are consumption, not output."""
+    return "outBiddingZone_Domain.mRID" in ts.meta and "inBiddingZone_Domain.mRID" not in ts.meta
+
+
 def generation(
     client: EntsoeClient, start: pd.Timestamp, end: pd.Timestamp, budget: Budget | None = None
 ) -> pd.DataFrame:
@@ -195,7 +200,7 @@ def generation(
     groups: dict[str, list[pd.Series[float]]] = {}
     for s in series:
         label = psr_label(s.meta.get("psrType", "unknown"))
-        if "outBiddingZone_Domain.mRID" in s.meta and "inBiddingZone_Domain.mRID" not in s.meta:
+        if is_consumption(s):
             label += CONSUMPTION_SUFFIX
         groups.setdefault(label, []).append(_on_grid(s))
     cols = {k: _combine(v, start, end) for k, v in sorted(groups.items())}
@@ -220,6 +225,22 @@ def physical_flows(
     return _frame(cols, start, end)
 
 
+def european_solar(
+    client: EntsoeClient, start: pd.Timestamp, end: pd.Timestamp, budget: Budget | None = None
+) -> pd.DataFrame:
+    """Actual solar generation (A75/A16, PSR type B16) per zone of :data:`PRICE_ZONES`, MW.
+
+    Queried with ``psrType=B16`` so only solar is downloaded. Some zones (e.g. NL, DE-LU) also
+    report a solar *consumption* series against ``outBiddingZone_Domain``; it is dropped.
+    """
+    cols: dict[str, pd.Series[float]] = {}
+    for code, eic in PRICE_ZONES.items():
+        params = {"documentType": "A75", "processType": "A16", "in_Domain": eic, "psrType": "B16"}
+        series = _fetch(client, params, "quantity", start, end, budget=budget)
+        cols[code] = _combine((_on_grid(s) for s in series if not is_consumption(s)), start, end)
+    return _frame(cols, start, end)
+
+
 DATASETS: dict[
     str, Callable[[EntsoeClient, pd.Timestamp, pd.Timestamp, Budget | None], pd.DataFrame]
 ] = {
@@ -228,4 +249,5 @@ DATASETS: dict[
     "generation": generation,
     "flows": physical_flows,
     "eu_prices": european_prices,
+    "eu_solar": european_solar,
 }

@@ -1,9 +1,9 @@
-"""European day-ahead markets around France: price spreads, convergence and physical flows.
+"""European day-ahead markets around France: spreads, convergence, flows and negative prices.
 
-Inputs are the 15-minute UTC frames of :mod:`frgrid.datasets` (``eu_prices``, ``flows``).
-Everything is computed on the 15-minute grid, so each quarter-hour weighs the same: before
-1 October 2025 an hourly price is repeated four times, which makes "share of time" identical to
-"share of hours"; from then on it is the share of 15-minute market time units.
+Inputs are the 15-minute UTC frames of :mod:`frgrid.datasets` (``eu_prices``, ``flows``,
+``eu_solar``). Everything is computed on the 15-minute grid, so each quarter-hour weighs the
+same: before 1 October 2025 an hourly price is repeated four times, which makes "share of time"
+identical to "share of hours"; from then on it is the share of 15-minute market time units.
 
 Definitions (also documented in the README)
 -------------------------------------------
@@ -16,6 +16,13 @@ Definitions (also documented in the README)
 * **Flow against the spread**: a quarter-hour with different prices where the *physical* net flow
   on the border goes from the expensive zone to the cheap one. Flows below
   :data:`FLOW_DEADBAND_MW` count as no flow.
+* **Negative price**: strictly below 0 EUR/MWh.
+* **Relative solar output**: solar generation divided by that zone's 99th percentile of solar
+  generation in the same calendar year, capped at 1. It makes zones of very different size
+  comparable and follows the growth of installed capacity from one year to the next, while
+  keeping the seasons (a winter noon stays well below 1). Because capacity also grows *within*
+  a year, high relative values cluster in late summer; the analysis therefore compares negative
+  prices with solar by hour of day rather than by solar level.
 """
 
 from __future__ import annotations
@@ -32,6 +39,10 @@ NEAR_TOL: Final = 1.0  # EUR/MWh, "near convergence"
 FLOW_DEADBAND_MW: Final = 50.0
 SPREAD_BINS: Final = (0.0, 1.0, 5.0, 20.0, 50.0, np.inf)
 SPREAD_BIN_LABELS: Final = ("0-1", "1-5", "5-20", "20-50", ">50")
+DAYLIGHT_HOURS: Final = range(10, 17)  # local 10:00-16:59, the core of solar output
+INCOMPLETE_SOLAR: Final = frozenset({"NL"})
+"""Zones whose ENTSO-E solar series covers only a small part of the installed PV (NL peaks at
+about 0.3 GW); they are left out of every solar comparison."""
 
 
 def zones(frame: pd.DataFrame) -> list[str]:
@@ -235,3 +246,90 @@ def against_by_spread_size(prices: pd.DataFrame, flows: pd.DataFrame) -> pd.Data
     table = pd.DataFrame(out)
     table.index.name = "abs_spread_eur_mwh"
     return table
+
+
+# ---- negative prices and solar -----------------------------------------------------------------
+
+
+def negative(prices: pd.DataFrame) -> pd.DataFrame:
+    """1.0 where a zone's price is below zero, 0.0 otherwise, NaN where missing."""
+    p = prices[zones(prices)]
+    return (p < 0).astype(float).where(p.notna())
+
+
+def negative_by_month(prices: pd.DataFrame) -> pd.DataFrame:
+    """Share of time with a negative price, per zone and month."""
+    neg = negative(prices)
+    return neg.groupby(_months(neg.index)).mean()
+
+
+def negative_by_year(prices: pd.DataFrame) -> pd.DataFrame:
+    """Equivalent hours with a negative price per zone and calendar year (quarter-hours / 4)."""
+    neg = negative(prices)
+    years = pd.Index(_local(neg.index).year, name="year")
+    return neg.groupby(years).sum() / 4
+
+
+def negative_by_hour(prices: pd.DataFrame) -> pd.DataFrame:
+    """Share of time with a negative price per local hour of day (rows) and zone."""
+    neg = negative(prices)
+    return neg.groupby(_hours(neg.index)).mean()
+
+
+def solar_zones(solar: pd.DataFrame) -> list[str]:
+    """Zones whose solar series is usable (see :data:`INCOMPLETE_SOLAR`)."""
+    return [z for z in zones(solar) if z not in INCOMPLETE_SOLAR]
+
+
+def relative_solar(solar: pd.DataFrame) -> pd.DataFrame:
+    """Solar output over the zone's 99th percentile in the same calendar year, in [0, 1]."""
+    z = solar_zones(solar)
+    years = pd.Index(_local(solar.index).year, name="year")
+    peak = solar[z].groupby(years).transform(lambda s: s.quantile(0.99))
+    rel = solar[z] / peak.where(peak > 0)
+    return rel.clip(0, 1)
+
+
+def solar_profile(solar: pd.DataFrame) -> pd.DataFrame:
+    """Mean relative solar output per local hour of day (rows) and zone."""
+    rel = relative_solar(solar)
+    return rel.groupby(_hours(rel.index)).mean()
+
+
+def negative_solar_summary(prices: pd.DataFrame, solar: pd.DataFrame) -> pd.DataFrame:
+    """Per zone: negative-price hours per year and when they happen.
+
+    * ``negative_share``: share of time with a negative price;
+    * ``hours_per_year``: equivalent hours per year (quarter-hours / 4, scaled to 365.25 days);
+    * ``in_daylight``: share of negative quarter-hours between local 10:00 and 17:00;
+    * ``on_weekends``: share on Saturdays and Sundays (2/7 = 29% if evenly spread);
+    * ``in_spring``: share in March-May (25% of the year);
+    * ``solar_above_half``: share with relative solar output >= 0.5 (NaN without usable solar);
+    * ``corr_solar``: correlation of the price with relative solar output.
+    """
+    rel = relative_solar(solar).reindex(prices.index)
+    neg = negative(prices)
+    local = _local(prices.index)
+    daylight = pd.Series(local.hour.isin(list(DAYLIGHT_HOURS)), index=prices.index)
+    weekend = pd.Series(local.day_of_week >= 5, index=prices.index)
+    spring = pd.Series(local.month.isin([3, 4, 5]), index=prices.index)
+    rows = {}
+    for z in zones(prices):
+        n = neg[z]
+        is_neg = n == 1.0
+        any_neg = bool(is_neg.any())
+        days = float(n.notna().sum()) / 96
+        rows[z] = {
+            "negative_share": float(n.mean()),
+            "hours_per_year": float(n.sum() / 4 * 365.25 / days) if days else np.nan,
+            "in_daylight": float(daylight[is_neg].mean()) if any_neg else np.nan,
+            "on_weekends": float(weekend[is_neg].mean()) if any_neg else np.nan,
+            "in_spring": float(spring[is_neg].mean()) if any_neg else np.nan,
+            "solar_above_half": float((rel.loc[is_neg, z] >= 0.5).mean())
+            if z in rel and any_neg
+            else np.nan,
+            "corr_solar": float(prices[z].corr(rel[z])) if z in rel else np.nan,
+        }
+    out = pd.DataFrame.from_dict(rows, orient="index")
+    out.index.name = "zone"
+    return out
