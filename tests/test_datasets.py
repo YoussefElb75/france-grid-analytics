@@ -196,3 +196,31 @@ def test_solar_per_zone_drops_the_consumption_series() -> None:
     expected = generation.values.reindex(frame.index)
     pd.testing.assert_series_equal(frame["NL"], expected, check_names=False, check_freq=False)
     assert frame["NL"].min() >= 1100
+
+
+def test_capacity_columns_and_directions() -> None:
+    es = PRICE_ZONES["ES"]
+    day = (pd.Timestamp("2026-06-14T22:00Z"), pd.Timestamp("2026-06-15T22:00Z"))
+    fake = FakeClient(
+        {
+            (
+                ("documentType", "A61"),
+                ("in_Domain", FRANCE),
+                ("out_Domain", es),
+            ): "ntc_es_to_fr.xml",
+        }
+    )
+    frame = datasets.cross_border_capacity(as_client(fake), *day)
+    assert list(frame.columns) == [
+        f"{kind}_{d}"
+        for z in ("ES", "IT_NORTH")
+        for d in (f"FR_to_{z}", f"{z}_to_FR")
+        for kind in ("ntc", "da")
+    ]
+    assert all(c["contract_MarketAgreement.Type"] == "A01" for c in fake.calls)
+    assert {c["documentType"] for c in fake.calls} == {"A61", "A09"}
+    ntc = frame["ntc_ES_to_FR"]
+    assert ntc.notna().all()
+    assert ntc.iloc[0] == 2600.0  # A03: position 1 carried forward until position 7
+    assert ntc.iloc[4 * 6] == 3200.0
+    assert frame["ntc_FR_to_ES"].isna().all()

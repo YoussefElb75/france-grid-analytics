@@ -20,7 +20,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from frgrid.areas import FRANCE, LOCAL_TZ, NEIGHBOURS, PRICE_ZONES
+from frgrid.areas import FRANCE, LOCAL_TZ, NEIGHBOURS, NTC_BORDERS, PRICE_ZONES
 from frgrid.client import EntsoeClient
 from frgrid.codes import CONSUMPTION_SUFFIX, psr_label
 from frgrid.parse import TimeSeries, expand, parse_document
@@ -241,6 +241,32 @@ def european_solar(
     return _frame(cols, start, end)
 
 
+def cross_border_capacity(
+    client: EntsoeClient, start: pd.Timestamp, end: pd.Timestamp, budget: Budget | None = None
+) -> pd.DataFrame:
+    """Day-ahead NTC (A61) and day-ahead commercial schedules (A09) on France's NTC borders, MW.
+
+    For each border in :data:`NTC_BORDERS` and direction: ``ntc_FR_to_XX`` / ``ntc_XX_to_FR``
+    (forecasted day-ahead transfer capacity, contract A01) and ``da_FR_to_XX`` / ``da_XX_to_FR``
+    (scheduled commercial exchanges from the day-ahead market, contract A01). ``in_Domain`` is
+    the area the energy goes into, as for physical flows. The flow-based Core borders (BE,
+    DE-LU) have no bilateral capacity to publish.
+    """
+    cols: dict[str, pd.Series[float]] = {}
+    for code, eic in NTC_BORDERS.items():
+        for name, into, out_of in ((f"FR_to_{code}", eic, FRANCE), (f"{code}_to_FR", FRANCE, eic)):
+            for prefix, doc in (("ntc", "A61"), ("da", "A09")):
+                params = {
+                    "documentType": doc,
+                    "contract_MarketAgreement.Type": "A01",
+                    "in_Domain": into,
+                    "out_Domain": out_of,
+                }
+                series = _fetch(client, params, "quantity", start, end, budget=budget)
+                cols[f"{prefix}_{name}"] = _combine((_on_grid(s) for s in series), start, end)
+    return _frame(cols, start, end)
+
+
 DATASETS: dict[
     str, Callable[[EntsoeClient, pd.Timestamp, pd.Timestamp, Budget | None], pd.DataFrame]
 ] = {
@@ -250,4 +276,5 @@ DATASETS: dict[
     "flows": physical_flows,
     "eu_prices": european_prices,
     "eu_solar": european_solar,
+    "eu_capacity": cross_border_capacity,
 }

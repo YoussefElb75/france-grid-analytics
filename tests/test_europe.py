@@ -198,3 +198,40 @@ def test_zone_helpers_follow_price_zone_order() -> None:
     p = prices_frame({z: [1.0] for z in reversed(PRICE_ZONES)})
     assert eu.zones(p) == list(PRICE_ZONES)
     assert eu.neighbours(p) == list(PRICE_ZONES)[1:]
+
+
+def capacity_frame(da_out: list[float], da_in: list[float]) -> pd.DataFrame:
+    n = len(da_out)
+    return pd.DataFrame(
+        {
+            "ntc_FR_to_ES": [3000.0] * n,
+            "da_FR_to_ES": da_out,
+            "ntc_ES_to_FR": [2000.0] * n,
+            "da_ES_to_FR": da_in,
+        },
+        index=grid(n),
+    )
+
+
+def test_saturation_by_direction() -> None:
+    cap = capacity_frame([3000.0, 2999.5, 1000.0, 0.0, 0.0], [0.0, 0.0, 0.0, 2000.0, np.nan])
+    sat = eu.saturation(cap)["ES"]
+    assert sat.iloc[:4].tolist() == [1.0, 1.0, 0.0, -1.0]
+    assert np.isnan(sat.iloc[4])
+    by_month = eu.congestion_by_month(cap)
+    assert by_month.loc["2025-06-01", "ES_export"] == 0.5
+    assert by_month.loc["2025-06-01", "ES_import"] == 0.25
+
+
+def test_congestion_check_against_prices() -> None:
+    # ES dearer & export full (consistent); ES cheaper & import full (consistent); ES dearer but
+    # border not full (inconsistent); equal prices & border free (consistent).
+    cap = capacity_frame([3000.0, 0.0, 1000.0, 500.0], [0.0, 2000.0, 0.0, 0.0])
+    p = prices_frame({"FR": [50.0] * 4, "ES": [70.0, 30.0, 60.0, 50.0]})
+    check = eu.congestion_check(p, cap).loc["ES"]
+    assert check["saturated_when_decoupled"] == pytest.approx(2 / 3)
+    assert check["saturated_when_converged"] == 0.0
+    assert check["saturated"] == 0.5
+    assert check["quarter_hours"] == 4
+    ntc = eu.ntc_by_month(cap)
+    assert list(ntc.columns) == ["ntc_FR_to_ES", "ntc_ES_to_FR"]

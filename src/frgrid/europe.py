@@ -16,6 +16,8 @@ Definitions (also documented in the README)
 * **Flow against the spread**: a quarter-hour with different prices where the *physical* net flow
   on the border goes from the expensive zone to the cheap one. Flows below
   :data:`FLOW_DEADBAND_MW` count as no flow.
+* **Saturated border** (NTC borders FR-ES and FR-IT-North only): the net day-ahead commercial
+  exchange in one direction is within :data:`SATURATION_MW` of the day-ahead NTC.
 * **Negative price**: strictly below 0 EUR/MWh.
 * **Relative solar output**: solar generation divided by that zone's 99th percentile of solar
   generation in the same calendar year, capped at 1. It makes zones of very different size
@@ -37,6 +39,7 @@ from frgrid.areas import FLOW_BORDER, LOCAL_TZ, PRICE_ZONES
 CONVERGENCE_TOL: Final = 0.005
 NEAR_TOL: Final = 1.0  # EUR/MWh, "near convergence"
 FLOW_DEADBAND_MW: Final = 50.0
+SATURATION_MW: Final = 1.0
 SPREAD_BINS: Final = (0.0, 1.0, 5.0, 20.0, 50.0, np.inf)
 SPREAD_BIN_LABELS: Final = ("0-1", "1-5", "5-20", "20-50", ">50")
 DAYLIGHT_HOURS: Final = range(10, 17)  # local 10:00-16:59, the core of solar output
@@ -246,6 +249,81 @@ def against_by_spread_size(prices: pd.DataFrame, flows: pd.DataFrame) -> pd.Data
     table = pd.DataFrame(out)
     table.index.name = "abs_spread_eur_mwh"
     return table
+
+
+# ---- congestion on the NTC borders ------------------------------------------------------------
+
+
+def capacity_borders(capacity: pd.DataFrame) -> list[str]:
+    return [z for z in PRICE_ZONES if f"ntc_FR_to_{z}" in capacity.columns]
+
+
+def saturation(capacity: pd.DataFrame) -> pd.DataFrame:
+    """Per NTC border and quarter-hour: +1 if the day-ahead exchange France -> neighbour uses the
+    whole NTC, -1 if neighbour -> France does, 0 otherwise; NaN where data are missing.
+
+    "Uses the whole NTC" means the net day-ahead schedule in that direction is within
+    :data:`SATURATION_MW` of the NTC (or above it) and the NTC is positive.
+    """
+    out = {}
+    for z in capacity_borders(capacity):
+        net = capacity[f"da_FR_to_{z}"] - capacity[f"da_{z}_to_FR"]
+        ntc_out, ntc_in = capacity[f"ntc_FR_to_{z}"], capacity[f"ntc_{z}_to_FR"]
+        export_full = (ntc_out > 0) & (net >= ntc_out - SATURATION_MW)
+        import_full = (ntc_in > 0) & (-net >= ntc_in - SATURATION_MW)
+        value = pd.Series(0.0, index=capacity.index).mask(export_full, 1.0).mask(import_full, -1.0)
+        valid = net.notna() & ntc_out.notna() & ntc_in.notna()
+        out[z] = value.where(valid)
+    return pd.DataFrame(out, index=capacity.index)
+
+
+def congestion_by_month(capacity: pd.DataFrame) -> pd.DataFrame:
+    """Share of time each NTC border is saturated, per month, in each direction.
+
+    Columns ``<zone>_export`` (France -> neighbour full) and ``<zone>_import``.
+    """
+    sat = saturation(capacity)
+    cols = {}
+    for z in sat.columns:
+        cols[f"{z}_export"] = (sat[z] == 1.0).astype(float).where(sat[z].notna())
+        cols[f"{z}_import"] = (sat[z] == -1.0).astype(float).where(sat[z].notna())
+    frame = pd.DataFrame(cols, index=sat.index)
+    return frame.groupby(_months(frame.index)).mean()
+
+
+def ntc_by_month(capacity: pd.DataFrame) -> pd.DataFrame:
+    """Monthly mean day-ahead NTC per border and direction, MW."""
+    cols = [c for c in capacity.columns if str(c).startswith("ntc_")]
+    return capacity[cols].groupby(_months(capacity.index)).mean()
+
+
+def congestion_check(prices: pd.DataFrame, capacity: pd.DataFrame) -> pd.DataFrame:
+    """How well the published NTC explains the prices, per NTC border.
+
+    * ``saturated_when_decoupled``: among quarter-hours with different prices, the share where
+      the day-ahead exchange uses the whole NTC from the cheap to the expensive zone (should be
+      close to 1 if the NTC is the capacity the market actually used);
+    * ``saturated_when_converged``: among quarter-hours with equal prices, the share with a
+      saturated border (should be close to 0);
+    * ``saturated``: share of all quarter-hours with the border saturated in either direction.
+    """
+    sat = saturation(capacity)
+    spr = spreads(prices).reindex(sat.index)
+    rows = {}
+    for z in sat.columns:
+        frame = pd.DataFrame({"sat": sat[z], "s": spr[z]}).dropna()
+        dec = frame[frame["s"].abs() >= CONVERGENCE_TOL]
+        conv = frame[frame["s"].abs() < CONVERGENCE_TOL]
+        right_way = np.sign(dec["s"]) == dec["sat"]
+        rows[z] = {
+            "saturated_when_decoupled": float(right_way.mean()),
+            "saturated_when_converged": float((conv["sat"] != 0).mean()),
+            "saturated": float((frame["sat"] != 0).mean()),
+            "quarter_hours": len(frame),
+        }
+    out = pd.DataFrame.from_dict(rows, orient="index")
+    out.index.name = "zone"
+    return out
 
 
 # ---- negative prices and solar -----------------------------------------------------------------
