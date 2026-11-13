@@ -10,6 +10,7 @@ Requires the ``screenshots`` extra and ``python -m playwright install chromium``
 Usage::
 
     python scripts/capture_dashboard.py --out docs/img
+    python scripts/capture_dashboard.py --tabs Europe   # one tab, no GIF
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ TABS = {
     "Prices": ("dashboard_prices.png", 3),
     "System": ("dashboard_system.png", 4),
     "Cross-border flows": ("dashboard_flows.png", 2),
+    "Europe": ("dashboard_europe.png", 10),
 }
 WIDTH = 1360
 HIDE_CHROME_CSS = """
@@ -97,7 +99,13 @@ def _content_height(page: Page) -> int:
     return int(height) + 40
 
 
-def capture(out: Path, port: int) -> list[Path]:
+def capture(out: Path, port: int, tabs: list[str] | None = None) -> list[Path]:
+    """Screenshot ``tabs`` (default: all); the GIF tour is rebuilt only when all are captured."""
+    selected = list(TABS) if tabs is None else tabs
+    unknown = [t for t in selected if t not in TABS]
+    if unknown:
+        msg = f"unknown tab(s): {', '.join(unknown)}"
+        raise ValueError(msg)
     out.mkdir(parents=True, exist_ok=True)
     server = subprocess.Popen(
         [sys.executable, "-m", "frgrid.cli", "dashboard", "--port", str(port)],
@@ -115,7 +123,8 @@ def capture(out: Path, port: int) -> list[Path]:
             page.goto(f"http://localhost:{port}/")
             page.add_style_tag(content=HIDE_CHROME_CSS)
             _settle(page)
-            for tab, (filename, charts) in TABS.items():
+            for tab in selected:
+                filename, charts = TABS[tab]
                 page.get_by_role("tab", name=tab).click()
                 _settle(page, charts)
                 page.set_viewport_size({"width": WIDTH, "height": 900})
@@ -131,12 +140,13 @@ def capture(out: Path, port: int) -> list[Path]:
         server.terminate()
         server.wait(timeout=30)
 
-    gif = out / "dashboard_tour.gif"
-    palette = [f.convert("P", palette=Image.Palette.ADAPTIVE, colors=128) for f in frames]
-    palette[0].save(
-        gif, save_all=True, append_images=palette[1:], duration=2200, loop=0, optimize=True
-    )
-    written.append(gif)
+    if selected == list(TABS):
+        gif = out / "dashboard_tour.gif"
+        palette = [f.convert("P", palette=Image.Palette.ADAPTIVE, colors=128) for f in frames]
+        palette[0].save(
+            gif, save_all=True, append_images=palette[1:], duration=2200, loop=0, optimize=True
+        )
+        written.append(gif)
 
     cs = _scanner()
     tokens = cs._local_token_variants(ROOT)
@@ -153,8 +163,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", type=Path, default=ROOT / "docs" / "img")
     parser.add_argument("--port", type=int, default=8519)
+    parser.add_argument(
+        "--tabs", nargs="+", choices=list(TABS), help="tabs to capture (default: all)"
+    )
     args = parser.parse_args(argv)
-    for path in capture(args.out, args.port):
+    for path in capture(args.out, args.port, args.tabs):
         print(f"wrote {path.relative_to(ROOT)} ({path.stat().st_size // 1024} KB), scan clean")
     return 0
 

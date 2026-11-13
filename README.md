@@ -58,9 +58,9 @@ take 420 requests: 192 for the France datasets and 228 for the European ones (`e
 The data layer (`frgrid.dashboard.data`) has no Streamlit dependency and is unit-tested offline;
 the app itself is tested headless with Streamlit's `AppTest`.
 
-| Prices | System | Cross-border flows |
-|---|---|---|
-| ![Prices tab](docs/img/dashboard_prices.png) | ![System tab](docs/img/dashboard_system.png) | ![Flows tab](docs/img/dashboard_flows.png) |
+| Prices | System | Cross-border flows | Europe |
+|---|---|---|---|
+| ![Prices tab](docs/img/dashboard_prices.png) | ![System tab](docs/img/dashboard_system.png) | ![Flows tab](docs/img/dashboard_flows.png) | ![Europe tab](docs/img/dashboard_europe.png) |
 
 ## What is in here
 
@@ -279,4 +279,5 @@ ruff check . && ruff format --check .
 mypy                                        # strict
 pytest                                      # offline
 python scripts/capture_dashboard.py         # README screenshots + GIF (".[screenshots]" extra)
+python scripts/capture_dashboard.py --tabs Europe   # one tab only, GIF left as is
 ```
