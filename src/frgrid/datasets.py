@@ -20,7 +20,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from frgrid.areas import FRANCE, LOCAL_TZ, NEIGHBOURS
+from frgrid.areas import FRANCE, LOCAL_TZ, NEIGHBOURS, PRICE_ZONES
 from frgrid.client import EntsoeClient
 from frgrid.codes import CONSUMPTION_SUFFIX, psr_label
 from frgrid.parse import TimeSeries, expand, parse_document
@@ -110,18 +110,33 @@ def _frame(
     return frame
 
 
-def day_ahead_prices(
-    client: EntsoeClient, start: pd.Timestamp, end: pd.Timestamp, budget: Budget | None = None
+SEQUENCE_KEY = "classificationSequence_AttributeInstanceComponent.position"
+CONTRACT_KEY = "contract_MarketAgreement.type"
+
+
+def is_day_ahead_sdac(ts: TimeSeries) -> bool:
+    """Keep the SDAC day-ahead series of an A44 answer and drop the others.
+
+    * ``contract_MarketAgreement.type`` A01 is the day-ahead contract; Spain also returns its
+      intraday auctions (A07) in the same answer since October 2025.
+    * Germany-Luxembourg publishes two day-ahead sequences: position 1 is SDAC, position 2 a
+      separate 15-minute auction (hourly SDAC prices sit next to 15-minute ones before October
+      2025). Series without a sequence position count as position 1.
+    """
+    return ts.meta.get(CONTRACT_KEY, "A01") == "A01" and ts.meta.get(SEQUENCE_KEY, "1") == "1"
+
+
+def zone_prices(
+    client: EntsoeClient,
+    zone: str,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    budget: Budget | None = None,
 ) -> pd.DataFrame:
-    """Day-ahead (SDAC) prices for France in EUR/MWh, with the native ``resolution_min``."""
-    params = {"documentType": "A44", "in_Domain": FRANCE, "out_Domain": FRANCE}
+    """Day-ahead (SDAC) prices of one bidding zone (EIC) in EUR/MWh, with ``resolution_min``."""
+    params = {"documentType": "A44", "in_Domain": zone, "out_Domain": zone}
     series = _fetch(client, params, "price.amount", start, end, budget=budget)
-    # Some zones publish several classification sequences; keep the first (position 1) if present.
-    series = [
-        s
-        for s in series
-        if s.meta.get("classificationSequence_AttributeInstanceComponent.position", "1") == "1"
-    ]
+    series = [s for s in series if is_day_ahead_sdac(s)]
     price = _combine((_on_grid(s) for s in series), start, end)
     res = _combine(
         (expand(s.native_minutes, s.resolution, GRID) for s in series),
@@ -129,6 +144,30 @@ def day_ahead_prices(
         end,
     )
     return _frame({"price_eur_mwh": price, "resolution_min": res}, start, end)
+
+
+def day_ahead_prices(
+    client: EntsoeClient, start: pd.Timestamp, end: pd.Timestamp, budget: Budget | None = None
+) -> pd.DataFrame:
+    """Day-ahead (SDAC) prices for France in EUR/MWh, with the native ``resolution_min``."""
+    return zone_prices(client, FRANCE, start, end, budget)
+
+
+def european_prices(
+    client: EntsoeClient, start: pd.Timestamp, end: pd.Timestamp, budget: Budget | None = None
+) -> pd.DataFrame:
+    """Day-ahead prices of every zone in :data:`PRICE_ZONES`, EUR/MWh.
+
+    One price column per zone code (``FR``, ``DE_LU`` ...) and its published resolution in
+    ``res_<zone>`` (minutes). France uses the same queries as :func:`day_ahead_prices`, so its
+    cached windows are shared.
+    """
+    cols: dict[str, pd.Series[float]] = {}
+    for code, eic in PRICE_ZONES.items():
+        frame = zone_prices(client, eic, start, end, budget)
+        cols[code] = frame["price_eur_mwh"]
+        cols[f"res_{code}"] = frame["resolution_min"]
+    return _frame(cols, start, end)
 
 
 def load(
@@ -188,4 +227,5 @@ DATASETS: dict[
     "load": load,
     "generation": generation,
     "flows": physical_flows,
+    "eu_prices": european_prices,
 }

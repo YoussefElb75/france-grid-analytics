@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 
 from frgrid import datasets
-from frgrid.areas import FRANCE, NEIGHBOURS
+from frgrid.areas import FRANCE, NEIGHBOURS, PRICE_ZONES
 from frgrid.client import EntsoeClient
 from frgrid.parse import expand, parse_document
 
@@ -127,3 +127,54 @@ def test_budget_stops_between_requests() -> None:
     with pytest.raises(datasets.BudgetExceededError):
         datasets.load(as_client(fake), *DAY, budget)
     assert fake.calls == []
+
+
+def test_de_lu_keeps_the_sdac_sequence_only() -> None:
+    # Fixture: sequence 2 (separate 15-min auction) comes first with synthetic base 80, sequence 1
+    # (SDAC) second with base 88; values are base + 0.5 * position.
+    fake = FakeClient({(("documentType", "A44"),): "prices_de_lu_two_sequences.xml"})
+    frame = datasets.zone_prices(as_client(fake), PRICE_ZONES["DE_LU"], *DAY)
+    assert fake.calls[0]["in_Domain"] == fake.calls[0]["out_Domain"] == PRICE_ZONES["DE_LU"]
+    assert frame["price_eur_mwh"].iloc[0] == 88.5
+    assert frame["price_eur_mwh"].notna().all()
+    assert set(frame["resolution_min"]) == {15.0}
+
+
+def test_spain_drops_intraday_auction_series() -> None:
+    # Fixture: one day-ahead series (A01, base 50) and three intraday auctions (A07, base 55-65).
+    fake = FakeClient({(("documentType", "A44"),): "prices_es_with_intraday.xml"})
+    frame = datasets.zone_prices(as_client(fake), PRICE_ZONES["ES"], *DAY)
+    parsed = parse_document((FIX / "prices_es_with_intraday.xml").read_bytes(), "price.amount")
+    assert [s.meta.get("contract_MarketAgreement.type") for s in parsed] == ["A01"] + ["A07"] * 3
+    expected = parsed[0].values.reindex(frame.index)
+    pd.testing.assert_series_equal(
+        frame["price_eur_mwh"], expected, check_names=False, check_freq=False
+    )
+    assert frame["price_eur_mwh"].iloc[0] == 50.25
+
+
+def test_nl_transition_day_keeps_hourly_then_quarter_hourly() -> None:
+    days = (pd.Timestamp("2025-09-29T22:00Z"), pd.Timestamp("2025-10-01T22:00Z"))
+    fake = FakeClient({(("documentType", "A44"),): "prices_nl_transition.xml"})
+    frame = datasets.zone_prices(as_client(fake), PRICE_ZONES["NL"], *days)
+    assert frame["price_eur_mwh"].notna().all()
+    res = frame["resolution_min"]
+    assert set(res.iloc[:96]) == {60.0}
+    assert set(res.iloc[96:]) == {15.0}
+
+
+def test_european_prices_one_column_per_zone() -> None:
+    fake = FakeClient({(("documentType", "A44"),): "prices_pt15m.xml"})
+    frame = datasets.european_prices(as_client(fake), *DAY)
+    zones = list(PRICE_ZONES)
+    assert list(frame.columns) == [c for z in zones for c in (z, f"res_{z}")]
+    assert [c["in_Domain"] for c in fake.calls] == list(PRICE_ZONES.values())
+    assert frame[zones].notna().all().all()
+
+
+def test_france_prices_reuse_the_v1_query() -> None:
+    fake = FakeClient({})
+    datasets.day_ahead_prices(as_client(fake), *DAY)
+    datasets.european_prices(as_client(fake), *DAY)
+    v1_query = {"documentType": "A44", "in_Domain": FRANCE, "out_Domain": FRANCE}
+    assert fake.calls[0] == fake.calls[1] == v1_query
